@@ -1,0 +1,10 @@
+- id: default
+  name: 默认助手
+  description: 通用智能助手
+  system_prompt: 你是一个有用的 AI 助手。
+  icon: robot
+- id: db9b342f-3a54-4411-b1d3-5d512bdb31ed
+  name: test
+  description: test
+  system_prompt: test
+  icon: robot
