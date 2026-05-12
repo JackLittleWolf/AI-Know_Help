@@ -1,3 +1,6 @@
+<img width="3020" height="1536" alt="d8d18af3-5cfd-464e-aee9-1d2f39a52ab7" src="https://github.com/user-attachments/assets/38b76803-888f-4c48-b565-8a525c93309e" />
+
+
 # OCR & AI 提示词工具
 
 集多格式文件 OCR 内容提取与 AI 提示词生成于一体的 Web 应用。
