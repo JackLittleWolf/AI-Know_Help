@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from app.models.schemas import AppSettings, LLMSettings, OCRSettings
+from app.models.schemas import AppSettings, LLMSettings, OCRSettings, StorageSettings, EmbeddingSettings, VectorDBSettings
 
 _SETTINGS_FILE = Path(__file__).parent.parent / "data" / "settings.yml"
 _LEGACY_JSON = Path(__file__).parent.parent / "data" / "settings.json"
@@ -32,7 +32,10 @@ def load() -> AppSettings:
                 pass
     # Fall back to env var
     from app.core.config import settings as env
-    return AppSettings(llm=LLMSettings(api_key=env.ANTHROPIC_API_KEY))
+    return AppSettings(
+        llm=LLMSettings(api_key=env.ANTHROPIC_API_KEY),
+        storage=StorageSettings(upload_dir=env.UPLOAD_DIR),
+    )
 
 
 def save(s: AppSettings) -> None:
@@ -49,3 +52,16 @@ def load_llm() -> LLMSettings:
 
 def load_ocr() -> OCRSettings:
     return load().ocr
+
+
+def load_upload_dir() -> str:
+    settings = load()
+    return settings.storage.upload_dir
+
+
+def load_embedding() -> EmbeddingSettings:
+    return load().embedding
+
+
+def load_vector_db() -> VectorDBSettings:
+    return load().vector_db

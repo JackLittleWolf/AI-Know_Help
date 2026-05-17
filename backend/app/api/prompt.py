@@ -14,7 +14,12 @@ async def list_skills():
 async def generate_prompt(request: PromptRequest):
     if not request.content.strip():
         raise HTTPException(status_code=400, detail="内容不能为空")
-    data = await prompt_service.generate_prompt(request.content, request.type or "general", request.skills)
+    data = await prompt_service.generate_prompt(
+        request.content,
+        request.type or "general",
+        request.skills,
+        request.agent_id,
+    )
     return PromptResponse(data=data)
 
 

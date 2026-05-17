@@ -2,14 +2,26 @@ llm:
   provider: custom
   api_key: ollama
   base_url: http://localhost:11434/v1
-  model: qwen2.5:14b
-  max_tokens: 1024
+  model: qwen3:14b
+  max_tokens: 10000
   temperature: 0.7
+  enable_thinking: true
+  thinking_budget_tokens: 10000
 ocr:
   provider: local
   local_engine: rapidocr
   dpi: 150
-  lang: ch
+  lang: japan
   external_url: ''
   external_api_key: ''
   external_timeout: 30
+security:
+  settings_password: admin
+storage:
+  upload_dir: /Users/jackmin/Project/AI/AI_Code/ClaudeCode/AI_Know_Help/tmp/ocr_uploads
+mcp:
+  servers:
+  - name: ' GroundAPI '
+    url: https://mcp.groundapi.net/mcp
+    api_key: sk_gapi_072fae697b940b6ed986d1bc30e1b337
+    enabled: true

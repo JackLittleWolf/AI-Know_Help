@@ -34,10 +34,50 @@ def _ocr_image(image: Image.Image, ocr_cfg: OCRSettings) -> List[TextBlock]:
 
 def _ocr_rapidocr(image: Image.Image, ocr_cfg: OCRSettings) -> List[TextBlock]:
     import numpy as np
-    from rapidocr_onnxruntime import RapidOCR
-    engine = RapidOCR()
-    result, _ = engine(np.array(image))
-    return _parse_lines([item[1] for item in (result or []) if item[1].strip()])
+    from rapidocr import EngineType, ModelType, OCRVersion, RapidOCR, LangRec
+    engine = RapidOCR(params={
+        "Det.ocr_version": OCRVersion.PPOCRV4,
+        "Det.engine_type": EngineType.PADDLE,
+        "Det.model_type": ModelType.MOBILE,
+        "Rec.ocr_version": OCRVersion.PPOCRV4,
+        "Rec.engine_type": EngineType.PADDLE,
+        "Rec.model_type": ModelType.MOBILE,
+        "Rec.lang_type": LangRec.CH,
+        "Cls.ocr_version": OCRVersion.PPOCRV4,
+        "Cls.engine_type": EngineType.PADDLE,
+        "Cls.model_type": ModelType.MOBILE,
+    })
+    result = engine(np.array(image))
+    return _parse_lines(_rapidocr_text_lines(result))
+
+
+def _rapidocr_text_lines(result: object) -> List[str]:
+    # rapidocr 3.x returns RapidOCROutput, which stores recognized text in txts.
+    txts = getattr(result, "txts", None)
+    if txts is not None:
+        return [text for text in txts if isinstance(text, str) and text.strip()]
+
+    # Older rapidocr_onnxruntime style returns (result, elapse).
+    if isinstance(result, tuple) and result:
+        return _rapidocr_text_lines(result[0])
+
+    try:
+        items = iter(result) if result is not None else iter(())
+    except TypeError:
+        return []
+
+    lines: List[str] = []
+    for item in items:
+        text = ""
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, dict):
+            text = str(item.get("text") or item.get("txt") or "")
+        elif isinstance(item, (list, tuple)) and len(item) > 1:
+            text = str(item[1])
+        if text.strip():
+            lines.append(text)
+    return lines
 
 
 # ── local: PaddleOCR ───────────────────────────────────────────────────────────
@@ -128,7 +168,8 @@ def process_image(file_path: str) -> List[PageContent]:
 
 def process_pdf(file_path: str) -> List[PageContent]:
     cfg = _get_ocr_cfg()
-    images = convert_from_path(file_path, dpi=cfg.dpi)
+    # images = convert_from_path(poppler_path = r'D:\Project\AI\AI_Know_Help_20260511\AI_Know_Help_20260511\backend\app\plugin\poppler\Library\bin', pdf_path = file_path, dpi=cfg.dpi)
+    images = convert_from_path(pdf_path = file_path, dpi=cfg.dpi)
     return [
         PageContent(page=i, text_blocks=_ocr_image(img, cfg), preview_b64=_image_to_b64(img))
         for i, img in enumerate(images, start=1)
@@ -144,7 +185,11 @@ def process_office(file_path: str, suffix: str) -> List[PageContent]:
 
 
 def _convert_office_to_pdf(file_path: str) -> str:
-    out_dir = tempfile.mkdtemp()
+    from app.services import settings_service
+
+    upload_root = settings_service.load_upload_dir()
+    os.makedirs(upload_root, exist_ok=True)
+    out_dir = tempfile.mkdtemp(dir=upload_root)
     os.system(f'libreoffice --headless --convert-to pdf --outdir "{out_dir}" "{file_path}"')
     pdf_path = os.path.join(out_dir, f"{Path(file_path).stem}.pdf")
     if not os.path.exists(pdf_path):

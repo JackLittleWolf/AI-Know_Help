@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import ocr, prompt, settings, skills, chat, agents
+from app.api import ocr, prompt, settings, skills, chat, agents, knowledge
 from app.core.config import settings as env_settings
 
 app = FastAPI(
@@ -23,6 +23,7 @@ app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
+app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 
 
 @app.get("/health")

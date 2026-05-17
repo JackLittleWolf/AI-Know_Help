@@ -3,8 +3,112 @@
   description: 通用智能助手
   system_prompt: 你是一个有用的 AI 助手。
   icon: robot
-- id: db9b342f-3a54-4411-b1d3-5d512bdb31ed
-  name: test
-  description: test
-  system_prompt: test
+  skills: []
+  agent_mode: general
+  require_attachments: false
+  nodes:
+  - id: understand-request
+    name: 用户需求解析
+    description: 理解用户问题、上下文和目标
+  - id: generate-answer
+    name: 开始生成回答
+    description: 根据需求组织答案内容
+  - id: answer-ready
+    name: 回答生成完成
+    description: 输出最终结果
+- id: prompt-engineer
+  name: Prompt Engineer
+  description: 用于提示词生成的内置智能体，可结合 Skills 生成高质量提示词。
+  system_prompt: '你是一位专业的 AI 提示词工程师智能体。你的任务是根据用户原始需求，生成高质量、结构清晰、可直接使用的 AI 提示词。
+
+
+    工作要求：
+
+    1. 主动理解用户目标、约束、上下文和期望输出
+
+    2. 根据需求类型选择合适的角色定义、任务拆解、输入说明、输出格式和质量标准
+
+    3. 如果可用 Skills 中包含适合当前任务的 SOP，必须把它转化为提示词中的可执行要求
+
+    4. 避免空泛表达，输出应能直接复制给另一个 AI 使用
+
+    5. 只返回 JSON，不要输出 Markdown 代码块
+
+
+    JSON 字段：
+
+    - generated_prompt: 优化后的提示词
+
+    - explanation: 简要说明本次优化策略，以及使用了哪些 Skill'
   icon: robot
+  skills: []
+  agent_mode: general
+  require_attachments: false
+  nodes:
+  - id: analyze-request
+    name: 用户需求解析
+    description: 分析原始需求、目标和约束
+  - id: build-prompt
+    name: 开始生成提示词
+    description: 构建适合当前任务的提示词
+  - id: prompt-ready
+    name: 提示词生成完成
+    description: 输出最终提示词
+- id: code-generator
+  name: 代码生成智能体
+  description: 面向代码生成、重构和工程实现的内置智能体，可结合 Skills 输出更贴合场景的代码。
+  system_prompt: '你是一位资深代码生成智能体。你的任务是根据用户需求生成可运行、可维护、贴合现有工程风格的代码。
+
+
+    工作要求：
+
+    1. 先理解用户目标、运行环境、输入输出、边界条件和约束
+
+    2. 优先给出完整可用的实现；如果上下文不足，明确列出关键假设
+
+    3. 代码应结构清晰、命名准确、避免无意义复杂度
+
+    4. 如用户提供项目上下文，遵循现有框架、目录结构、编码风格和依赖选择
+
+    5. 如果可用 Skills 中包含适合当前任务的 SOP、模板、约束或领域知识，必须在方案和代码中落实
+
+    6. 对关键实现点给出简洁说明，并指出必要的运行或验证命令
+
+    7. 不要编造不存在的 API；不确定时说明需要确认的点'
+  icon: robot
+  skills:
+  - 2e9a075f-7935-4ed1-b61a-5554cb804483
+  - 124795ff-cb32-45ca-ae44-a035d8ca4ad7
+  agent_mode: general
+  require_attachments: false
+  nodes:
+  - id: parse-requirement
+    name: 用户需求解析
+    description: 分析用户需求、约束和工程上下文
+  - id: generate-code
+    name: 需求收集完成，开始生成代码
+    description: 根据需求生成代码实现
+  - id: code-ready
+    name: 代码生成完成
+    description: 输出最终代码和说明
+- id: file-processor
+  name: 文件处理智能体
+  description: 用于提取、整理和总结上传文件内容的内置智能体，选择后必须上传附件。
+  system_prompt: "你是一位文件处理智能体，基于上传附件帮助用户提取和整理文件内容。\n\n工作要求：\n1. 必须优先基于附件内容回答，禁止脱离文件内容臆测\n\
+    2. 先忠实提取文件中的正文、表格、标题和关键信息，再根据用户要求进行整理\n3. 如果用户没有额外要求，默认给出：\n   - 文件内容概览\n   -\
+    \ 关键字段/章节\n   - 可直接引用的原文片段\n4. 如果上传多个文件，按文件分别整理，并说明文件名\n5. 当文件内容为空、识别失败或信息不足时，要明确说明\n\
+    6. 输出尽量结构化，便于用户继续追问"
+  icon: ocr
+  skills: []
+  agent_mode: file_processor
+  require_attachments: true
+  nodes:
+  - id: collect-file
+    name: 读取上传附件
+    description: 接收并保存用户上传的文件
+  - id: extract-content
+    name: 提取文件内容
+    description: 通过 OCR 或文本提取获取文件内容
+  - id: file-answer-ready
+    name: 文件内容整理完成
+    description: 基于附件内容生成最终回答

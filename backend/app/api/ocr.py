@@ -3,7 +3,7 @@ import tempfile
 import shutil
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.models.schemas import OCRResponse, OCRData
-from app.services import ocr_service
+from app.services import ocr_service, settings_service
 from app.core.config import settings
 
 router = APIRouter()
@@ -25,7 +25,9 @@ async def process_ocr(file: UploadFile = File(...)):
     if len(content) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="文件大小超过限制（最大50MB）")
 
-    tmp_dir = tempfile.mkdtemp()
+    upload_root = settings_service.load_upload_dir()
+    os.makedirs(upload_root, exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(dir=upload_root)
     tmp_path = os.path.join(tmp_dir, file.filename or f"upload{suffix}")
     try:
         with open(tmp_path, "wb") as f:
