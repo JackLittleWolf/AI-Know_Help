@@ -9,6 +9,7 @@
               v-model:file-list="fileList"
               :before-upload="beforeUpload"
               :custom-request="handleUpload"
+              :disabled="processing || uploading"
               :show-upload-list="false"
               accept=".jpg,.jpeg,.png,.bmp,.tiff,.tif,.pdf,.docx,.xlsx,.pptx"
               class="upload-dragger"
@@ -65,15 +66,20 @@
                 </a-button>
               </div>
 
-              <!-- Image viewport -->
+              <!-- Preview viewport -->
               <div class="preview-viewport">
                 <img
                   v-if="currentPreviewSrc"
                   :src="currentPreviewSrc"
                   alt="预览"
                   class="preview-image"
-                  :style="{ width: zoom * 100 + '%' }"
+                  :style="previewImageStyle"
+                  @load="handlePreviewImageLoad"
                 />
+                <div v-else-if="isPdfPreview" class="pdf-canvas-wrap">
+                  <a-spin v-if="pdfLoading" />
+                  <canvas v-show="!pdfLoading" ref="pdfCanvas" class="pdf-preview-canvas" />
+                </div>
                 <div v-else class="preview-placeholder">
                   <file-text-outlined />
                   <span>{{ currentFile?.name }}</span>
@@ -166,7 +172,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef } from 'vue'
+import * as pdfjsLib from 'pdfjs-dist'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { message } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import type { UploadFile } from 'ant-design-vue'
@@ -188,6 +197,8 @@ import type { OCRData, OCRResponse } from '@/types'
 
 const { t } = useI18n()
 
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+
 const fileList = ref<UploadFile[]>([])
 const currentFile = ref<File | null>(null)
 const previewSrc = ref<string | null>(null)   // ObjectURL for images
@@ -195,14 +206,26 @@ const uploading = ref(false)
 const uploadProgress = ref(0)
 const processing = ref(false)
 const ocrData = ref<OCRData | null>(null)
+const pdfCanvas = ref<HTMLCanvasElement | null>(null)
+const pdfDoc = shallowRef<PDFDocumentProxy | null>(null)
+const pdfLoading = ref(false)
+const pdfTotalPages = ref(0)
+const previewImageBaseWidth = ref(0)
+let pdfRenderToken = 0
 
 // preview state
 const previewPage = ref(1)
 const zoom = ref(1)
 
 const isImage = computed(() => /\.(jpg|jpeg|png|bmp|tiff|tif)$/i.test(currentFile.value?.name ?? ''))
+const isPdf = computed(() => /\.pdf$/i.test(currentFile.value?.name ?? ''))
+const isPdfPreview = computed(() => Boolean(previewSrc.value && isPdf.value && !ocrData.value))
 
-const totalPreviewPages = computed(() => ocrData.value?.total_pages ?? (previewSrc.value ? 1 : 0))
+const totalPreviewPages = computed(() => ocrData.value?.total_pages ?? pdfTotalPages.value ?? (previewSrc.value ? 1 : 0))
+
+const previewImageStyle = computed(() => ({
+  width: previewImageBaseWidth.value ? `${previewImageBaseWidth.value * zoom.value}px` : `${zoom.value * 100}%`,
+}))
 
 const currentPreviewSrc = computed(() => {
   // After OCR: use per-page base64 thumbnails
@@ -211,11 +234,24 @@ const currentPreviewSrc = computed(() => {
     if (page?.preview_b64) return `data:image/png;base64,${page.preview_b64}`
   }
   // Before OCR: image ObjectURL (single page)
-  return previewSrc.value
+  return isImage.value ? previewSrc.value : null
 })
 
 // Reset page when new file loaded
-watch(ocrData, () => { previewPage.value = 1 })
+watch(ocrData, () => {
+  previewPage.value = 1
+  previewImageBaseWidth.value = 0
+})
+
+watch(currentPreviewSrc, () => { previewImageBaseWidth.value = 0 })
+
+watch([previewPage, zoom], () => {
+  if (isPdfPreview.value) renderPdfPage()
+})
+
+onBeforeUnmount(() => {
+  if (previewSrc.value) URL.revokeObjectURL(previewSrc.value)
+})
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -224,26 +260,85 @@ function formatSize(bytes: number): string {
 }
 
 function beforeUpload(file: File): boolean {
+  if (processing.value || uploading.value) return false
+  pdfRenderToken++
+  pdfDoc.value = null
+  pdfTotalPages.value = 0
+  pdfLoading.value = false
+  previewImageBaseWidth.value = 0
   currentFile.value = file
   ocrData.value = null
   previewPage.value = 1
   zoom.value = 1
   if (previewSrc.value) { URL.revokeObjectURL(previewSrc.value); previewSrc.value = null }
-  if (isImage.value) previewSrc.value = URL.createObjectURL(file)
+  if (isImage.value || isPdf.value) previewSrc.value = URL.createObjectURL(file)
+  if (isPdf.value) loadPdfPreview(file)
   return true
+}
+
+function handlePreviewImageLoad(event: Event) {
+  const image = event.target as HTMLImageElement
+  previewImageBaseWidth.value = image.clientWidth ? image.clientWidth / zoom.value : image.naturalWidth
+}
+
+async function loadPdfPreview(file: File) {
+  const token = ++pdfRenderToken
+  pdfLoading.value = true
+
+  try {
+    const data = await file.arrayBuffer()
+    const doc = await pdfjsLib.getDocument({ data }).promise
+    if (token !== pdfRenderToken) return
+
+    pdfDoc.value = doc
+    pdfTotalPages.value = doc.numPages
+    previewPage.value = 1
+    await renderPdfPage(token)
+  } catch (err: unknown) {
+    if (token === pdfRenderToken) {
+      message.error(err instanceof Error ? err.message : 'PDF 预览失败')
+      pdfDoc.value = null
+      pdfTotalPages.value = 0
+    }
+  } finally {
+    if (token === pdfRenderToken) pdfLoading.value = false
+  }
+}
+
+async function renderPdfPage(token = pdfRenderToken) {
+  if (!pdfDoc.value || !pdfCanvas.value) {
+    await nextTick()
+  }
+  if (!pdfDoc.value || !pdfCanvas.value || token !== pdfRenderToken) return
+
+  const page = await pdfDoc.value.getPage(previewPage.value)
+  if (token !== pdfRenderToken) return
+
+  const viewport = page.getViewport({ scale: zoom.value })
+  const canvas = pdfCanvas.value
+  const context = canvas.getContext('2d')
+  if (!context) return
+
+  canvas.width = viewport.width
+  canvas.height = viewport.height
+  canvas.style.width = `${viewport.width}px`
+  canvas.style.height = `${viewport.height}px`
+  await page.render({ canvas, canvasContext: context, viewport }).promise
 }
 
 async function handleUpload({ file }: { file: File }) {
   uploading.value = true
   uploadProgress.value = 0
-  processing.value = false
+  processing.value = true
+  ocrData.value = null
 
   const formData = new FormData()
   formData.append('file', file)
+  let timer: ReturnType<typeof setInterval> | undefined
 
   try {
     // Simulate upload progress
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       if (uploadProgress.value < 90) uploadProgress.value += 10
     }, 100)
 
@@ -251,14 +346,7 @@ async function handleUpload({ file }: { file: File }) {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
 
-    clearInterval(timer)
     uploadProgress.value = 100
-    uploading.value = false
-    processing.value = true
-
-    // Small delay to show processing state
-    await new Promise((r) => setTimeout(r, 300))
-    processing.value = false
 
     if (res.code === 200 && res.data) {
       ocrData.value = res.data
@@ -267,9 +355,11 @@ async function handleUpload({ file }: { file: File }) {
       message.error(res.message || '识别失败')
     }
   } catch (err: unknown) {
+    message.error(err instanceof Error ? err.message : t('ocr.result.uploadFail'))
+  } finally {
+    if (timer) clearInterval(timer)
     uploading.value = false
     processing.value = false
-    message.error(err instanceof Error ? err.message : t('ocr.result.uploadFail'))
   }
 }
 
@@ -450,6 +540,21 @@ function exportAs(format: 'txt' | 'json' | 'md') {
   border-radius: 2px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.12);
   transition: width 0.15s ease;
+}
+
+.pdf-canvas-wrap {
+  min-width: 60px;
+  min-height: 160px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.pdf-preview-canvas {
+  display: block;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12);
 }
 
 .preview-placeholder {

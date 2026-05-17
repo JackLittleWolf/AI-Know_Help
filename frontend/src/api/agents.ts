@@ -1,9 +1,20 @@
+export interface AgentNode {
+  id: string
+  name: string
+  description?: string
+}
+
 export interface Agent {
   id: string
   name: string
   description: string
   system_prompt: string
   icon?: string
+  skills?: string[]
+  kb_ids?: string[]
+  agent_mode?: 'general' | 'file_processor'
+  require_attachments?: boolean
+  nodes?: AgentNode[]
 }
 
 export async function getAgents(): Promise<Agent[]> {

@@ -27,6 +27,7 @@ export interface PromptRequest {
   content: string
   type?: string
   skills?: string[]
+  agent_id?: string
 }
 
 export interface TestPromptRequest {
@@ -67,6 +68,8 @@ export interface LLMSettings {
   model: string
   max_tokens: number
   temperature: number
+  enable_thinking: boolean
+  thinking_budget_tokens: number
 }
 
 // ── OCR Settings ──────────────────────────────────────────────────────────────
@@ -84,11 +87,97 @@ export interface OCRSettings {
   external_timeout: number
 }
 
+export interface SecuritySettings {
+  settings_password: string
+}
+
+export interface StorageSettings {
+  upload_dir: string
+}
+
+// ── MCP Settings ──────────────────────────────────────────────────────────────
+
+export interface MCPServerSettings {
+  name: string
+  url: string
+  api_key: string
+  enabled: boolean
+}
+
+export interface MCPSettings {
+  servers: MCPServerSettings[]
+}
+
+// ── Embedding Settings ────────────────────────────────────────────────────────
+
+export type EmbeddingProvider = 'ollama' | 'openai' | 'huggingface'
+
+export interface EmbeddingSettings {
+  provider: EmbeddingProvider
+  ollama_base_url: string
+  ollama_model: string
+  openai_api_key: string
+  openai_base_url: string
+  openai_model: string
+  hf_model_name: string
+  chunk_size: number
+  chunk_overlap: number
+}
+
+// ── Vector DB Settings ────────────────────────────────────────────────────────
+
+export type VectorDBProvider = 'chroma' | 'qdrant' | 'milvus' | 'pgvector'
+
+export interface VectorDBSettings {
+  provider: VectorDBProvider
+  chroma_persist_dir: string
+  qdrant_url: string
+  qdrant_api_key: string
+  milvus_uri: string
+  milvus_token: string
+  pgvector_dsn: string
+}
+
+// ── Knowledge Base ────────────────────────────────────────────────────────────
+
+export interface KnowledgeBase {
+  id: string
+  name: string
+  description: string
+  created_at: string
+  doc_count: number
+  chunk_count: number
+}
+
+export interface KnowledgeDocument {
+  id: string
+  kb_id: string
+  filename: string
+  file_type: string
+  file_size: number
+  chunk_count: number
+  created_at: string
+}
+
+export interface SearchResult {
+  content: string
+  score: number
+  doc_id: string
+  filename: string
+  kb_id: string
+  chunk_index: number
+}
+
 // ── Combined ──────────────────────────────────────────────────────────────────
 
 export interface AppSettings {
   llm: LLMSettings
   ocr: OCRSettings
+  security?: SecuritySettings
+  storage?: StorageSettings
+  mcp?: MCPSettings
+  embedding?: EmbeddingSettings
+  vector_db?: VectorDBSettings
 }
 
 export interface AppSettingsResponse {

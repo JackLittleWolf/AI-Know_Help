@@ -1,6 +1,6 @@
 <template>
   <div class="settings-page">
-    <a-card :bordered="false" class="settings-card">
+    <a-card v-if="settingsUnlocked" :bordered="false" class="settings-card">
       <a-tabs tab-position="left" class="settings-tabs">
 
         <!-- LLM tab -->
@@ -51,6 +51,26 @@
                     </a-form-item>
                   </a-col>
                 </a-row>
+
+                <a-form-item :label="t('settings.llm.enableThinking')" name="enable_thinking">
+                  <a-switch v-model:checked="llm.enable_thinking" />
+                  <div class="field-hint">{{ t('settings.llm.enableThinkingHint') }}</div>
+                </a-form-item>
+
+                <a-form-item
+                  v-if="llm.enable_thinking"
+                  :label="t('settings.llm.thinkingBudgetTokens')"
+                  name="thinking_budget_tokens"
+                >
+                  <a-input-number
+                    v-model:value="llm.thinking_budget_tokens"
+                    :min="1024"
+                    :max="64000"
+                    :step="1024"
+                    style="width:280px"
+                  />
+                  <div class="field-hint">{{ t('settings.llm.thinkingBudgetHint') }}</div>
+                </a-form-item>
 
                 <a-form-item>
                   <a-button :loading="llmTesting" @click="testLLM">
@@ -145,6 +165,24 @@
           </div>
         </a-tab-pane>
 
+        <!-- Storage tab -->
+        <a-tab-pane key="storage">
+          <template #tab>
+            <span><upload-outlined /> {{ t('settings.storage.tab') }}</span>
+          </template>
+          <div class="tab-content">
+            <div class="tab-title">{{ t('settings.storage.title') }}</div>
+            <div class="tab-body">
+              <a-form :model="storage" layout="vertical">
+                <a-form-item :label="t('settings.storage.uploadDir')" name="upload_dir">
+                  <a-input v-model:value="storage.upload_dir" :placeholder="t('settings.storage.uploadDirPlaceholder')" allow-clear />
+                  <div class="field-hint">{{ t('settings.storage.uploadDirHint') }}</div>
+                </a-form-item>
+              </a-form>
+            </div>
+          </div>
+        </a-tab-pane>
+
         <!-- Skills tab -->
         <a-tab-pane key="skills">
           <template #tab>
@@ -198,6 +236,213 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </a-tab-pane>
+
+        <!-- MCP tab -->
+        <a-tab-pane key="mcp">
+          <template #tab>
+            <span><api-outlined /> {{ t('settings.mcp.tab') }}</span>
+          </template>
+          <div class="tab-content">
+            <div class="tab-title">{{ t('settings.mcp.title') }}</div>
+            <div class="tab-body">
+              <p class="field-hint" style="margin-bottom:16px">{{ t('settings.mcp.hint') }}</p>
+
+              <div class="mcp-toolbar">
+                <a-button type="primary" @click="addMCPServer">
+                  <template #icon><plus-outlined /></template>
+                  {{ t('settings.mcp.addServer') }}
+                </a-button>
+              </div>
+
+              <a-empty v-if="mcpServers.length === 0" :description="t('settings.mcp.empty')" style="margin-top:32px" />
+
+              <div v-else class="mcp-server-list">
+                <div v-for="(srv, idx) in mcpServers" :key="idx" class="mcp-server-item">
+                  <div class="mcp-server-header">
+                    <a-switch v-model:checked="srv.enabled" size="small" />
+                    <span class="mcp-server-index">#{{ idx + 1 }}</span>
+                    <a-button size="small" type="text" danger @click="removeMCPServer(idx)">
+                      <template #icon><delete-outlined /></template>
+                      {{ t('settings.mcp.removeServer') }}
+                    </a-button>
+                  </div>
+                  <a-form layout="vertical" style="margin-top:8px">
+                    <a-row :gutter="12">
+                      <a-col :span="8">
+                        <a-form-item :label="t('settings.mcp.serverName')">
+                          <a-input v-model:value="srv.name" :placeholder="t('settings.mcp.serverNamePlaceholder')" allow-clear />
+                        </a-form-item>
+                      </a-col>
+                      <a-col :span="10">
+                        <a-form-item :label="t('settings.mcp.serverUrl')">
+                          <a-input v-model:value="srv.url" :placeholder="t('settings.mcp.serverUrlPlaceholder')" allow-clear />
+                        </a-form-item>
+                      </a-col>
+                      <a-col :span="6">
+                        <a-form-item :label="t('settings.mcp.serverApiKey')">
+                          <a-input-password v-model:value="srv.api_key" :placeholder="t('settings.mcp.serverApiKeyPlaceholder')" allow-clear autocomplete="off" />
+                        </a-form-item>
+                      </a-col>
+                    </a-row>
+                    <a-form-item style="margin-bottom:0">
+                      <a-button size="small" :loading="mcpTestingIdx === idx" @click="testMCPServer(idx)">
+                        <template #icon><api-outlined /></template>{{ t('settings.mcp.testBtn') }}
+                      </a-button>
+                      <a-tag v-if="mcpTestResults[idx] === 'ok'" color="success" style="margin-left:8px">
+                        <check-circle-outlined /> {{ t('settings.mcp.testOk') }}
+                      </a-tag>
+                      <a-tag v-else-if="mcpTestResults[idx] === 'fail'" color="error" style="margin-left:8px">
+                        <close-circle-outlined /> {{ t('settings.mcp.testFail') }}
+                      </a-tag>
+                      <span v-if="mcpTestErrors[idx]" class="test-error">{{ mcpTestErrors[idx] }}</span>
+                    </a-form-item>
+                  </a-form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </a-tab-pane>
+
+        <!-- Knowledge Base tab -->
+        <a-tab-pane key="knowledge">
+          <template #tab>
+            <span><database-outlined /> {{ t('settings.knowledge.tab') }}</span>
+          </template>
+          <div class="tab-content">
+            <div class="tab-title">{{ t('settings.knowledge.embeddingTitle') }}</div>
+            <div class="tab-body">
+              <a-form :model="embedding" layout="vertical">
+                <a-form-item :label="t('settings.knowledge.embeddingProvider')">
+                  <a-radio-group v-model:value="embedding.provider" button-style="solid">
+                    <a-radio-button value="ollama">Ollama</a-radio-button>
+                    <a-radio-button value="openai">OpenAI</a-radio-button>
+                    <a-radio-button value="huggingface">HuggingFace</a-radio-button>
+                  </a-radio-group>
+                </a-form-item>
+
+                <template v-if="embedding.provider === 'ollama'">
+                  <a-row :gutter="12">
+                    <a-col :span="14">
+                      <a-form-item :label="t('settings.knowledge.ollamaBaseUrl')">
+                        <a-input v-model:value="embedding.ollama_base_url" placeholder="http://localhost:11434" allow-clear />
+                      </a-form-item>
+                    </a-col>
+                    <a-col :span="10">
+                      <a-form-item :label="t('settings.knowledge.ollamaModel')">
+                        <a-input v-model:value="embedding.ollama_model" placeholder="nomic-embed-text" allow-clear />
+                      </a-form-item>
+                    </a-col>
+                  </a-row>
+                </template>
+
+                <template v-if="embedding.provider === 'openai'">
+                  <a-form-item :label="t('settings.knowledge.openaiApiKey')">
+                    <a-input-password v-model:value="embedding.openai_api_key" placeholder="sk-..." allow-clear autocomplete="off" />
+                  </a-form-item>
+                  <a-row :gutter="12">
+                    <a-col :span="14">
+                      <a-form-item :label="t('settings.knowledge.openaiBaseUrl')">
+                        <a-input v-model:value="embedding.openai_base_url" placeholder="https://api.openai.com/v1" allow-clear />
+                      </a-form-item>
+                    </a-col>
+                    <a-col :span="10">
+                      <a-form-item :label="t('settings.knowledge.openaiModel')">
+                        <a-input v-model:value="embedding.openai_model" placeholder="text-embedding-3-small" allow-clear />
+                      </a-form-item>
+                    </a-col>
+                  </a-row>
+                </template>
+
+                <template v-if="embedding.provider === 'huggingface'">
+                  <a-form-item :label="t('settings.knowledge.hfModelName')">
+                    <a-input v-model:value="embedding.hf_model_name" placeholder="BAAI/bge-small-zh-v1.5" allow-clear />
+                  </a-form-item>
+                </template>
+
+                <a-row :gutter="12">
+                  <a-col :span="12">
+                    <a-form-item :label="t('settings.knowledge.chunkSize')">
+                      <a-input-number v-model:value="embedding.chunk_size" :min="100" :max="4000" :step="100" style="width:100%" />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :span="12">
+                    <a-form-item :label="t('settings.knowledge.chunkOverlap')">
+                      <a-input-number v-model:value="embedding.chunk_overlap" :min="0" :max="500" :step="10" style="width:100%" />
+                    </a-form-item>
+                  </a-col>
+                </a-row>
+              </a-form>
+
+              <a-divider />
+              <div class="tab-title" style="margin-bottom:16px">{{ t('settings.knowledge.vdbTitle') }}</div>
+              <a-form :model="vectorDb" layout="vertical">
+                <a-form-item :label="t('settings.knowledge.vdbProvider')">
+                  <a-radio-group v-model:value="vectorDb.provider" button-style="solid">
+                    <a-radio-button value="chroma">Chroma</a-radio-button>
+                    <a-radio-button value="qdrant">Qdrant</a-radio-button>
+                    <a-radio-button value="milvus">Milvus</a-radio-button>
+                    <a-radio-button value="pgvector">PGVector</a-radio-button>
+                  </a-radio-group>
+                </a-form-item>
+
+                <template v-if="vectorDb.provider === 'chroma'">
+                  <a-form-item :label="t('settings.knowledge.chromaPersistDir')">
+                    <a-input v-model:value="vectorDb.chroma_persist_dir" placeholder="./data/chroma" allow-clear />
+                  </a-form-item>
+                </template>
+
+                <template v-if="vectorDb.provider === 'qdrant'">
+                  <a-row :gutter="12">
+                    <a-col :span="14">
+                      <a-form-item :label="t('settings.knowledge.qdrantUrl')">
+                        <a-input v-model:value="vectorDb.qdrant_url" placeholder="http://localhost:6333" allow-clear />
+                      </a-form-item>
+                    </a-col>
+                    <a-col :span="10">
+                      <a-form-item :label="t('settings.knowledge.qdrantApiKey')">
+                        <a-input-password v-model:value="vectorDb.qdrant_api_key" allow-clear autocomplete="off" />
+                      </a-form-item>
+                    </a-col>
+                  </a-row>
+                </template>
+
+                <template v-if="vectorDb.provider === 'milvus'">
+                  <a-row :gutter="12">
+                    <a-col :span="14">
+                      <a-form-item :label="t('settings.knowledge.milvusUri')">
+                        <a-input v-model:value="vectorDb.milvus_uri" placeholder="http://localhost:19530" allow-clear />
+                      </a-form-item>
+                    </a-col>
+                    <a-col :span="10">
+                      <a-form-item :label="t('settings.knowledge.milvusToken')">
+                        <a-input-password v-model:value="vectorDb.milvus_token" allow-clear autocomplete="off" />
+                      </a-form-item>
+                    </a-col>
+                  </a-row>
+                </template>
+
+                <template v-if="vectorDb.provider === 'pgvector'">
+                  <a-form-item :label="t('settings.knowledge.pgvectorDsn')">
+                    <a-input-password v-model:value="vectorDb.pgvector_dsn" placeholder="postgresql://user:pass@localhost:5432/dbname" allow-clear autocomplete="off" />
+                  </a-form-item>
+                </template>
+
+                <a-form-item>
+                  <a-button :loading="kbTesting" @click="testKBConnection">
+                    <template #icon><api-outlined /></template>{{ t('settings.knowledge.testBtn') }}
+                  </a-button>
+                  <a-tag v-if="kbTestResult === 'ok'" color="success" style="margin-left:10px">
+                    <check-circle-outlined /> {{ t('settings.knowledge.testOk') }}
+                  </a-tag>
+                  <a-tag v-else-if="kbTestResult === 'fail'" color="error" style="margin-left:10px">
+                    <close-circle-outlined /> {{ t('settings.knowledge.testFail') }}
+                  </a-tag>
+                  <span v-if="kbTestError" class="test-error">{{ kbTestError }}</span>
+                </a-form-item>
+              </a-form>
             </div>
           </div>
         </a-tab-pane>
@@ -267,11 +512,36 @@
         <pre>{{ previewSkill?.skill_md }}</pre>
       </div>
     </a-modal>
+
+    <a-modal
+      v-model:open="passwordModalVisible"
+      :title="t('settings.password.title')"
+      :ok-text="t('settings.password.confirm')"
+      :cancel-text="t('settings.password.close')"
+      :confirm-loading="verifyingPassword"
+      :closable="true"
+      :mask-closable="false"
+      width="420px"
+      @ok="verifySettingsPassword"
+      @cancel="closeSettingsPasswordModal"
+    >
+      <a-form layout="vertical" @submit.prevent="verifySettingsPassword">
+        <a-form-item :label="t('settings.password.label')">
+          <a-input-password
+            v-model:value="settingsPassword"
+            :placeholder="t('settings.password.placeholder')"
+            autocomplete="current-password"
+            @press-enter="verifySettingsPassword"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -286,20 +556,28 @@ import {
   UploadOutlined,
   FileTextOutlined,
   EyeOutlined,
+  PlusOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import http from '@/utils/http'
-import type { LLMSettings, OCRSettings, PromptResponse, SkillMeta } from '@/types'
+import type { LLMSettings, MCPServerSettings, OCRSettings, PromptResponse, SkillMeta, StorageSettings, EmbeddingSettings, VectorDBSettings } from '@/types'
 
 const { t } = useI18n()
+const router = useRouter()
 const store = useSettingsStore()
 const saving = ref(false)
+const settingsUnlocked = ref(false)
+const passwordModalVisible = ref(true)
+const verifyingPassword = ref(false)
+const settingsPassword = ref('')
 
 // ── LLM ───────────────────────────────────────────────────────────────────────
 
 const llm = reactive<LLMSettings>({
   provider: 'anthropic', api_key: '', base_url: '',
   model: 'claude-sonnet-4-6', max_tokens: 1024, temperature: 0.7,
+  enable_thinking: false, thinking_budget_tokens: 10000,
 })
 const llmTesting = ref(false)
 const llmTestResult = ref<'ok' | 'fail' | null>(null)
@@ -314,6 +592,101 @@ const ocr = reactive<OCRSettings>({
 const ocrTesting = ref(false)
 const ocrTestResult = ref<'ok' | 'fail' | null>(null)
 const ocrTestError = ref('')
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+const storage = reactive<StorageSettings>({
+  upload_dir: '/tmp/ocr_uploads',
+})
+
+// ── MCP ───────────────────────────────────────────────────────────────────────
+
+const mcpServers = ref<MCPServerSettings[]>([])
+const mcpTestingIdx = ref<number | null>(null)
+const mcpTestResults = ref<Record<number, 'ok' | 'fail'>>({})
+const mcpTestErrors = ref<Record<number, string>>({})
+
+// ── Embedding & Vector DB ─────────────────────────────────────────────────────
+
+const embedding = reactive<EmbeddingSettings>({
+  provider: 'ollama',
+  ollama_base_url: 'http://localhost:11434',
+  ollama_model: 'nomic-embed-text',
+  openai_api_key: '',
+  openai_base_url: '',
+  openai_model: 'text-embedding-3-small',
+  hf_model_name: 'BAAI/bge-small-zh-v1.5',
+  chunk_size: 500,
+  chunk_overlap: 50,
+})
+
+const vectorDb = reactive<VectorDBSettings>({
+  provider: 'chroma',
+  chroma_persist_dir: './data/chroma',
+  qdrant_url: 'http://localhost:6333',
+  qdrant_api_key: '',
+  milvus_uri: 'http://localhost:19530',
+  milvus_token: '',
+  pgvector_dsn: '',
+})
+
+const kbTesting = ref(false)
+const kbTestResult = ref<'ok' | 'fail' | null>(null)
+const kbTestError = ref('')
+
+async function testKBConnection() {
+  kbTesting.value = true
+  kbTestResult.value = null
+  kbTestError.value = ''
+  try {
+    await store.save({
+      llm: { ...llm }, ocr: { ...ocr }, storage: { ...storage },
+      mcp: { servers: mcpServers.value.map(s => ({ ...s })) },
+      embedding: { ...embedding }, vector_db: { ...vectorDb },
+    })
+    const res = await http.post<unknown, { code: number; message: string }>('/knowledge/test-connection', {})
+    kbTestResult.value = res.code === 200 ? 'ok' : 'fail'
+    if (res.code !== 200) kbTestError.value = res.message
+  } catch (err: unknown) {
+    kbTestResult.value = 'fail'
+    kbTestError.value = err instanceof Error ? err.message : t('settings.knowledge.testFail')
+  } finally {
+    kbTesting.value = false
+  }
+}
+
+function addMCPServer() {
+  mcpServers.value.push({ name: '', url: '', api_key: '', enabled: true })
+}
+
+function removeMCPServer(idx: number) {
+  mcpServers.value.splice(idx, 1)
+  delete mcpTestResults.value[idx]
+  delete mcpTestErrors.value[idx]
+}
+
+async function testMCPServer(idx: number) {
+  const srv = mcpServers.value[idx]
+  if (!srv.url) return
+  mcpTestingIdx.value = idx
+  delete mcpTestResults.value[idx]
+  delete mcpTestErrors.value[idx]
+  try {
+    const res = await http.post<unknown, { code: number; message: string }>('/settings/mcp/test', {
+      name: srv.name,
+      url: srv.url,
+      api_key: srv.api_key,
+      enabled: srv.enabled,
+    })
+    mcpTestResults.value[idx] = res.code === 200 ? 'ok' : 'fail'
+    if (res.code !== 200) mcpTestErrors.value[idx] = res.message
+  } catch (err: unknown) {
+    mcpTestResults.value[idx] = 'fail'
+    mcpTestErrors.value[idx] = err instanceof Error ? err.message : t('settings.mcp.testFail')
+  } finally {
+    mcpTestingIdx.value = null
+  }
+}
 
 // ── Skills ────────────────────────────────────────────────────────────────────
 
@@ -417,11 +790,45 @@ function openPreview(skill: SkillMeta) {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
+  passwordModalVisible.value = true
+})
+
+async function loadSettingsPageData() {
   await store.fetch()
   Object.assign(llm, store.settings.llm)
   Object.assign(ocr, store.settings.ocr)
+  Object.assign(storage, store.settings.storage ?? { upload_dir: '/tmp/ocr_uploads' })
+  mcpServers.value = (store.settings.mcp?.servers ?? []).map(s => ({ ...s }))
+  if (store.settings.embedding) Object.assign(embedding, store.settings.embedding)
+  if (store.settings.vector_db) Object.assign(vectorDb, store.settings.vector_db)
   await fetchSkills()
-})
+}
+
+async function verifySettingsPassword() {
+  if (!settingsPassword.value.trim()) {
+    message.warning(t('settings.password.required'))
+    return
+  }
+  verifyingPassword.value = true
+  try {
+    await http.post<unknown, { code: number; message: string }>('/settings/verify-password', {
+      password: settingsPassword.value,
+    })
+    settingsUnlocked.value = true
+    passwordModalVisible.value = false
+    settingsPassword.value = ''
+    await loadSettingsPageData()
+  } catch (err: unknown) {
+    message.error(err instanceof Error ? err.message : t('settings.password.fail'))
+  } finally {
+    verifyingPassword.value = false
+  }
+}
+
+function closeSettingsPasswordModal() {
+  passwordModalVisible.value = false
+  router.push('/ocr')
+}
 
 // ── LLM helpers ───────────────────────────────────────────────────────────────
 
@@ -447,7 +854,11 @@ const llmKeyPlaceholder = computed(() =>
   ({ anthropic: 'sk-ant-...', openai: 'sk-...', custom: 'Bearer token' }[llm.provider] ?? 'API Key')
 )
 const llmModelHint = computed(() =>
-  ({ anthropic: 'claude-sonnet-4-6 recommended', openai: 'gpt-4o recommended', custom: 'Enter the model ID supported by your service' }[llm.provider] ?? '')
+  ({
+    anthropic: t('settings.llm.modelHintAnthropic'),
+    openai: t('settings.llm.modelHintOpenAI'),
+    custom: t('settings.llm.modelHintCustom'),
+  }[llm.provider] ?? '')
 )
 
 function onLLMProviderChange() {
@@ -464,7 +875,14 @@ function onOCRProviderChange() {
 async function onSave() {
   saving.value = true
   try {
-    await store.save({ llm: { ...llm }, ocr: { ...ocr } })
+    await store.save({
+      llm: { ...llm },
+      ocr: { ...ocr },
+      storage: { ...storage },
+      mcp: { servers: mcpServers.value.map(s => ({ ...s })) },
+      embedding: { ...embedding },
+      vector_db: { ...vectorDb },
+    })
     message.success(t('settings.saved'))
   } catch (err: unknown) {
     message.error(err instanceof Error ? err.message : t('settings.saveFail'))
@@ -478,7 +896,14 @@ async function testLLM() {
   llmTestResult.value = null
   llmTestError.value = ''
   try {
-    await store.save({ llm: { ...llm }, ocr: { ...ocr } })
+    await store.save({
+      llm: { ...llm },
+      ocr: { ...ocr },
+      storage: { ...storage },
+      mcp: { servers: mcpServers.value.map(s => ({ ...s })) },
+      embedding: { ...embedding },
+      vector_db: { ...vectorDb },
+    })
     const res = await http.post<unknown, PromptResponse>('/prompt/generate', { content: 'test', type: 'general' })
     llmTestResult.value = res.code === 200 ? 'ok' : 'fail'
     if (res.code !== 200) llmTestError.value = res.message
@@ -507,8 +932,21 @@ async function testOCR() {
 }
 
 function onReset() {
-  Object.assign(llm, { provider: 'anthropic', api_key: '', base_url: '', model: 'claude-sonnet-4-6', max_tokens: 1024, temperature: 0.7 })
+  Object.assign(llm, {
+    provider: 'anthropic',
+    api_key: '',
+    base_url: '',
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1024,
+    temperature: 0.7,
+    enable_thinking: false,
+    thinking_budget_tokens: 10000,
+  })
   Object.assign(ocr, { provider: 'local', local_engine: 'rapidocr', dpi: 150, lang: 'ch', external_url: '', external_api_key: '', external_timeout: 30 })
+  Object.assign(storage, { upload_dir: '/tmp/ocr_uploads' })
+  mcpServers.value = []
+  mcpTestResults.value = {}
+  mcpTestErrors.value = {}
   llmTestResult.value = null
   ocrTestResult.value = null
   llmTestError.value = ''
@@ -592,4 +1030,26 @@ function onReset() {
   line-height: 1.7;
   font-family: monospace;
 }
+
+/* MCP */
+.mcp-toolbar { margin-bottom: 16px; }
+
+.mcp-server-list { display: flex; flex-direction: column; gap: 12px; }
+
+.mcp-server-item {
+  padding: 14px 16px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+.mcp-server-item:hover { border-color: #d9d9d9; }
+
+.mcp-server-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.mcp-server-index { font-size: 12px; color: #8c8c8c; flex: 1; }
 </style>

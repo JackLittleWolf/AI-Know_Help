@@ -42,10 +42,71 @@
           </template>
 
           <div v-else class="bubble">
-            <div v-if="msg.loading" class="loading-dots">
+            <div v-if="msg.statusText" class="process-status">
+              <div class="process-status-current">{{ msg.statusText }}</div>
+              <div v-if="msg.agentNodes && msg.agentNodes.length" class="agent-node-list">
+                <div
+                  v-for="node in msg.agentNodes"
+                  :key="node.id"
+                  class="agent-node-item"
+                  :class="node.status"
+                >
+                  <div class="agent-node-main">
+                    <span class="agent-node-name">{{ node.name }}</span>
+                    <span class="agent-node-status">{{ getNodeStatusLabel(node.status) }}</span>
+                  </div>
+                  <div v-if="node.detail || node.description" class="agent-node-desc">
+                    {{ node.detail || node.description }}
+                  </div>
+                </div>
+              </div>
+              <div v-if="msg.statusLogs && msg.statusLogs.length" class="process-status-log">
+                <div
+                  v-for="(item, idx) in msg.statusLogs"
+                  :key="`${idx}-${item}`"
+                  class="process-status-item"
+                  :style="{ animationDelay: `${idx * 0.15}s` }"
+                >
+                  {{ item }}
+                </div>
+              </div>
+            </div>
+            <div v-if="msg.loading && !msg.statusText" class="loading-dots">
               <span /><span /><span />
             </div>
             <template v-else>
+              <div v-if="msg.toolCalls && msg.toolCalls.length" class="tool-calls-panel">
+                <div
+                  v-for="(tc, tcIdx) in msg.toolCalls"
+                  :key="tcIdx"
+                  class="tool-call-item"
+                  :class="tc.status"
+                >
+                  <div class="tool-call-header">
+                    <span class="tool-call-icon">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                      </svg>
+                    </span>
+                    <span class="tool-call-name">{{ tc.tool_name }}</span>
+                    <span class="tool-call-status-badge" :class="tc.status">
+                      {{ tc.status === 'running' ? '调用中...' : '完成' }}
+                    </span>
+                  </div>
+                  <details class="tool-call-details">
+                    <summary>参数</summary>
+                    <pre class="tool-call-pre">{{ JSON.stringify(tc.arguments, null, 2) }}</pre>
+                  </details>
+                  <details v-if="tc.result" class="tool-call-details">
+                    <summary>结果</summary>
+                    <pre class="tool-call-pre">{{ tc.result }}</pre>
+                  </details>
+                </div>
+              </div>
+              <details v-if="msg.reasoning" class="reasoning-panel" :open="msg.streaming || !msg.content">
+                <summary>{{ t('chat.reasoning') }}</summary>
+                <pre class="reasoning-text">{{ msg.reasoning }}</pre>
+              </details>
               <div
                 class="markdown-body"
                 v-html="renderMarkdown(msg.content)"
@@ -93,7 +154,7 @@
         <textarea
           ref="textareaRef"
           v-model="inputText"
-          :placeholder="t('chat.placeholder')"
+          :placeholder="inputPlaceholder"
           class="db-textarea"
           rows="1"
           @keydown.enter.exact="onEnterKey"
@@ -113,7 +174,7 @@
               :before-upload="onBeforeUpload"
               :multiple="true"
               :show-upload-list="false"
-              accept=".txt,.md,.pdf,.docx,.png,.jpg,.jpeg,.bmp,.tiff,.webp,.csv"
+              accept=".txt,.text,.md,.json,.csv,.yaml,.yml,.xml,.log,.ini,.conf,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.bmp,.tiff,.webp"
             >
               <button class="tool-btn" type="button" title="上传文件">
                 <paper-clip-outlined />
@@ -130,11 +191,37 @@
                 :bordered="false"
               />
             </div>
+
+            <!-- Export / Import -->
+            <button
+              v-if="messages.length > 0"
+              class="tool-btn"
+              type="button"
+              title="导出聊天记录"
+              @click="exportChat"
+            >
+              <download-outlined />
+            </button>
+            <button
+              class="tool-btn"
+              type="button"
+              title="导入聊天记录"
+              @click="importInputRef?.click()"
+            >
+              <upload-outlined />
+            </button>
+            <input
+              ref="importInputRef"
+              type="file"
+              accept=".html,.json"
+              style="display:none"
+              @change="onImportFile"
+            />
           </div>
 
           <!-- Right: hint + send/stop -->
           <div class="toolbar-right">
-            <span class="key-hint">{{ inputText ? 'Enter 发送 · Shift+Enter 换行' : '' }}</span>
+            <span class="key-hint">{{ sendHintText }}</span>
 
             <!-- Stop -->
             <button
@@ -170,6 +257,7 @@
 <script setup lang="ts">
 import { ref, nextTick, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { message } from 'ant-design-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
@@ -180,17 +268,43 @@ import {
   RobotOutlined,
   UserOutlined,
   CloseOutlined,
+  DownloadOutlined,
+  UploadOutlined,
 } from '@ant-design/icons-vue'
-import { getAgents } from '@/api/agents'
+import { getAgents, type Agent, type AgentNode } from '@/api/agents'
 
 const { t } = useI18n()
+
+type AgentNodeStatus = 'pending' | 'running' | 'completed' | 'error'
+
+interface AgentNodeState {
+  id: string
+  name: string
+  description?: string
+  detail?: string
+  status: AgentNodeStatus
+}
+
+interface ToolCallState {
+  tool_name: string
+  arguments: Record<string, unknown>
+  result?: string
+  status: 'running' | 'done'
+}
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string
   files?: string[]
+  agentNodes?: AgentNodeState[]
+  toolCalls?: ToolCallState[]
   streaming?: boolean
   loading?: boolean
+  statusText?: string
+  statusLogs?: string[]
+  thinkBuffer?: string
+  thinkTag?: string | null
 }
 
 const messages = ref<Message[]>([])
@@ -200,27 +314,87 @@ const msgList = ref<HTMLElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const inputFocused = ref(false)
 const streaming = ref(false)
+const importInputRef = ref<HTMLInputElement | null>(null)
 let abortController: AbortController | null = null
 
+const agents = ref<Agent[]>([])
 const selectedAgentId = ref<string>('default')
 const agentOptions = ref<{ value: string; label: string }[]>([])
 
+const THINK_TAGS = [
+  { start: '<think>', end: '</think>' },
+  { start: '<thinking>', end: '</thinking>' },
+  { start: '<reason>', end: '</reason>' },
+  { start: '<reasoning>', end: '</reasoning>' },
+  { start: '<thought>', end: '</thought>' },
+]
+const MAX_THINK_START_TAG = THINK_TAGS.reduce((max, item) => Math.max(max, item.start.length), 0)
+
+function createInitialNodeStates(nodes?: AgentNode[]): AgentNodeState[] {
+  return (nodes || []).map(node => ({
+    id: node.id,
+    name: node.name,
+    description: node.description,
+    status: 'pending',
+  }))
+}
+
+function getNodeStatusLabel(status: AgentNodeStatus) {
+  return t(`chat.node_${status}`)
+}
+
+function getRunningNodeLabel(nodes?: AgentNodeState[]) {
+  const runningNode = nodes?.find(node => node.status === 'running')
+  return runningNode?.name || ''
+}
+
 onMounted(async () => {
   try {
-    const agents = await getAgents()
-    agentOptions.value = agents.map(a => ({
+    const loadedAgents = await getAgents()
+    agents.value = loadedAgents
+    agentOptions.value = loadedAgents.map(a => ({
       value: a.id,
       label: a.name
     }))
-    if (agents.length > 0 && !agents.find(a => a.id === selectedAgentId.value)) {
-      selectedAgentId.value = agents[0].id
+    if (loadedAgents.length > 0 && !loadedAgents.find(a => a.id === selectedAgentId.value)) {
+      selectedAgentId.value = loadedAgents[0].id
     }
   } catch (err) {
     console.error('Failed to load agents:', err)
   }
 })
 
-const canSend = computed(() => inputText.value.trim().length > 0 || attachedFiles.value.length > 0)
+const selectedAgent = computed(() => (
+  agents.value.find(agent => agent.id === selectedAgentId.value) ?? null
+))
+
+const isFileProcessorAgent = computed(() => (
+  selectedAgent.value?.agent_mode === 'file_processor' || selectedAgent.value?.require_attachments === true
+))
+
+const canSend = computed(() => {
+  if (isFileProcessorAgent.value) {
+    return attachedFiles.value.length > 0
+  }
+  return inputText.value.trim().length > 0 || attachedFiles.value.length > 0
+})
+
+const inputPlaceholder = computed(() => (
+  isFileProcessorAgent.value
+    ? t('chat.file_processor_placeholder')
+    : t('chat.placeholder')
+))
+
+const sendHintText = computed(() => {
+  if (streaming.value) return ''
+  if (isFileProcessorAgent.value && attachedFiles.value.length === 0) {
+    return t('chat.file_processor_need_files')
+  }
+  if (canSend.value) {
+    return 'Enter 发送 · Shift+Enter 换行'
+  }
+  return ''
+})
 
 const isComposing = ref(false)
 
@@ -410,19 +584,197 @@ async function scrollToBottom() {
   if (msgList.value) msgList.value.scrollTop = msgList.value.scrollHeight
 }
 
+// ── Export / Import ──────────────────────────────────────────────────────────
+
+function exportChat() {
+  const exportData = messages.value.map(m => ({
+    role: m.role,
+    content: m.content,
+    reasoning: m.reasoning,
+    files: m.files,
+    toolCalls: m.toolCalls,
+  }))
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filename = `chat-${ts}.html`
+
+  const html = buildExportHtml(exportData, ts)
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+  message.success('聊天记录已导出')
+}
+
+function buildExportHtml(data: object[], ts: string): string {
+  const msgHtml = (data as Array<{
+    role: string
+    content: string
+    reasoning?: string
+    files?: string[]
+    toolCalls?: ToolCallState[]
+  }>).map(m => {
+    if (m.role === 'user') {
+      const filesHtml = (m.files ?? []).map(f =>
+        `<div class="uf-chip">📎 ${escHtml(f)}</div>`
+      ).join('')
+      return `<div class="msg-row user">
+  <div class="bubble-wrap user">
+    ${filesHtml ? `<div class="user-files">${filesHtml}</div>` : ''}
+    ${m.content ? `<div class="user-bubble">${escHtml(m.content).replace(/\n/g, '<br>')}</div>` : ''}
+  </div>
+  <div class="avatar avatar-user">U</div>
+</div>`
+    }
+    const reasoningHtml = m.reasoning
+      ? `<details class="reasoning-panel"><summary>思考过程</summary><pre>${escHtml(m.reasoning)}</pre></details>`
+      : ''
+    const toolsHtml = (m.toolCalls ?? []).map(tc =>
+      `<div class="tool-call">
+  <div class="tool-call-header">🔧 <strong>${escHtml(tc.tool_name)}</strong> <span class="tc-badge ${tc.status}">${tc.status === 'done' ? '完成' : '调用中'}</span></div>
+  <details><summary>参数</summary><pre>${escHtml(JSON.stringify(tc.arguments, null, 2))}</pre></details>
+  ${tc.result ? `<details><summary>结果</summary><pre>${escHtml(tc.result)}</pre></details>` : ''}
+</div>`
+    ).join('')
+    const contentHtml = m.content
+      ? marked.parse(m.content) as string
+      : ''
+    return `<div class="msg-row assistant">
+  <div class="avatar avatar-ai">AI</div>
+  <div class="bubble-wrap assistant">
+    <div class="bubble">
+      ${toolsHtml}
+      ${reasoningHtml}
+      <div class="markdown-body">${contentHtml}</div>
+    </div>
+  </div>
+</div>`
+  }).join('\n')
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>聊天记录 ${ts}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fa;color:#1a1a1a;padding:24px}
+.chat-wrap{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.msg-row{display:flex;align-items:flex-start;gap:10px}
+.msg-row.user{flex-direction:row-reverse}
+.avatar{flex-shrink:0;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.avatar-ai{background:#1677ff;color:#fff}
+.avatar-user{background:#52c41a;color:#fff}
+.bubble-wrap{display:flex;flex-direction:column;max-width:72%}
+.bubble-wrap.user{align-items:flex-end;gap:8px}
+.bubble-wrap.assistant{align-items:flex-start}
+.user-files{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.uf-chip{background:#f0f0f0;border-radius:8px;padding:4px 10px;font-size:13px;color:#555}
+.user-bubble{background:#f4f4f4;border-radius:16px 16px 4px 16px;padding:10px 14px;font-size:14px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.bubble{background:#fff;border-radius:4px 12px 12px 12px;padding:12px 16px;box-shadow:0 1px 4px rgba(0,0,0,.08);word-break:break-word}
+.reasoning-panel{margin-bottom:10px;border:1px solid #e5e7eb;border-radius:8px;background:#f8fafc}
+.reasoning-panel summary{cursor:pointer;padding:8px 12px;font-size:13px;color:#475569;font-weight:600}
+.reasoning-panel pre{padding:0 12px 10px;white-space:pre-wrap;font-size:12px;color:#334155;line-height:1.6}
+.tool-call{border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;overflow:hidden}
+.tool-call-header{padding:6px 10px;font-size:13px;background:#f8fafc}
+.tc-badge{font-size:11px;padding:1px 6px;border-radius:10px;margin-left:6px}
+.tc-badge.done{background:#d9f7be;color:#237804}
+.tc-badge.running{background:#bae0ff;color:#0958d9}
+.tool-call details summary{cursor:pointer;padding:4px 10px;font-size:11px;color:#6b7280;border-top:1px solid #e5e7eb}
+.tool-call pre{padding:6px 10px;font-size:11.5px;font-family:monospace;white-space:pre-wrap;word-break:break-word;color:#374151;max-height:200px;overflow-y:auto}
+.markdown-body{font-size:14px;line-height:1.7}
+.markdown-body h1,.markdown-body h2,.markdown-body h3{margin:.5em 0 .25em;font-weight:600}
+.markdown-body p{margin:.3em 0}
+.markdown-body ul,.markdown-body ol{padding-left:1.4em;margin:.3em 0}
+.markdown-body code{background:#f0f2f5;padding:.1em .35em;border-radius:3px;font-size:.88em;font-family:monospace}
+.markdown-body pre{background:#1e1e2e;color:#cdd6f4;border-radius:6px;padding:12px 16px;overflow-x:auto;margin:.5em 0}
+.markdown-body pre code{background:none;padding:0;color:inherit}
+.markdown-body blockquote{border-left:3px solid #d0d0d0;margin:.4em 0;padding:.2em .8em;color:#666}
+.markdown-body table{border-collapse:collapse;width:100%;margin:.5em 0}
+.markdown-body th,.markdown-body td{border:1px solid #e0e0e0;padding:6px 10px}
+.markdown-body th{background:#f5f7fa;font-weight:600}
+.markdown-body a{color:#1677ff;text-decoration:none}
+.markdown-body hr{border:none;border-top:1px solid #e0e0e0;margin:.8em 0}
+.export-header{text-align:center;color:#8c8c8c;font-size:13px;margin-bottom:8px}
+</style>
+</head>
+<body>
+<p class="export-header">聊天记录导出于 ${ts.replace('T', ' ')}</p>
+<div class="chat-wrap">
+${msgHtml}
+</div>
+<script id="chat-data" type="application/json">${JSON.stringify(data)}<\/script>
+</body>
+</html>`
+}
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function onImportFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    const text = ev.target?.result as string
+    try {
+      let data: Message[]
+      if (file.name.endsWith('.json')) {
+        data = JSON.parse(text)
+      } else {
+        // Extract embedded JSON from <script id="chat-data">
+        const match = text.match(/<script[^>]+id="chat-data"[^>]*>([\s\S]*?)<\/script>/)
+        if (!match) throw new Error('未找到聊天数据')
+        data = JSON.parse(match[1])
+      }
+      if (!Array.isArray(data)) throw new Error('格式错误')
+      messages.value = data.map(m => ({
+        role: m.role,
+        content: m.content ?? '',
+        reasoning: m.reasoning,
+        files: m.files,
+        toolCalls: m.toolCalls,
+        streaming: false,
+        loading: false,
+        statusText: '',
+      }))
+      scrollToBottom()
+      message.success(`已导入 ${data.length} 条消息`)
+    } catch (err) {
+      message.error('导入失败：' + (err instanceof Error ? err.message : '格式不支持'))
+    }
+  }
+  reader.readAsText(file, 'utf-8')
+  // Reset so same file can be re-imported
+  ;(e.target as HTMLInputElement).value = ''
+}
+
 function stopStream() {
   abortController?.abort()
   streaming.value = false
   const last = messages.value[messages.value.length - 1]
   if (last?.role === 'assistant') {
     last.streaming = false
+    last.loading = false
+    if (!isFileProcessorAgent.value) {
+      last.statusText = ''
+    }
   }
 }
 
 async function sendMessage() {
   const text = inputText.value.trim()
-  if (!text && attachedFiles.value.length === 0) return
   if (streaming.value) return
+  if (isFileProcessorAgent.value && attachedFiles.value.length === 0) {
+    message.warning(t('chat.file_processor_need_files'))
+    return
+  }
+  if (!text && attachedFiles.value.length === 0) return
 
   messages.value.push({
     role: 'user',
@@ -439,7 +791,15 @@ async function sendMessage() {
   }
   await scrollToBottom()
 
-  messages.value.push({ role: 'assistant', content: '', streaming: true, loading: true })
+  messages.value.push({
+    role: 'assistant',
+    content: '',
+    agentNodes: createInitialNodeStates(selectedAgent.value?.nodes),
+    streaming: true,
+    loading: true,
+    statusText: isFileProcessorAgent.value ? t('chat.file_processor_waiting') : t('chat.general_waiting'),
+    statusLogs: [],
+  })
   // Get the reactive proxy (not the raw object) so mutations trigger DOM updates
   const assistantMsg = messages.value[messages.value.length - 1]
   await scrollToBottom()
@@ -461,6 +821,12 @@ async function sendMessage() {
   form.append('history', JSON.stringify(historyToSent))
   if (selectedAgentId.value) {
     form.append('agent_id', selectedAgentId.value)
+  }
+
+  // Pass agent's kb_ids for RAG
+  const agentKbIds = selectedAgent.value?.kb_ids ?? []
+  if (agentKbIds.length > 0) {
+    form.append('kb_ids', JSON.stringify(agentKbIds))
   }
 
   filesToSend.forEach(f => form.append('files', f))
@@ -502,12 +868,59 @@ async function sendMessage() {
         }
         try {
           const parsed = JSON.parse(data)
-          if (parsed.error) {
+          if (parsed.type === 'node_status' && parsed.nodes) {
             assistantMsg.loading = false
-            assistantMsg.content += `\n\n**错误:** ${parsed.error}`
-          } else if (parsed.text) {
+            assistantMsg.agentNodes = parsed.nodes as AgentNodeState[]
+            const runningNodeLabel = getRunningNodeLabel(assistantMsg.agentNodes)
+            if (runningNodeLabel) {
+              assistantMsg.statusText = runningNodeLabel
+            }
+            scheduleScroll()
+          } else if (parsed.type === 'status' && parsed.message) {
             assistantMsg.loading = false
-            assistantMsg.content += parsed.text
+            assistantMsg.statusText = parsed.message
+            if (isFileProcessorAgent.value) {
+              if (!assistantMsg.statusLogs) assistantMsg.statusLogs = []
+              assistantMsg.statusLogs.push(parsed.message)
+            }
+            scheduleScroll()
+          } else if (parsed.type === 'error' || parsed.error) {
+            const errorMessage = parsed.error || parsed.message || (
+              isFileProcessorAgent.value ? t('chat.file_processor_failed') : t('chat.general_failed')
+            )
+            assistantMsg.loading = false
+            assistantMsg.statusText = errorMessage
+            assistantMsg.content += `\n\n**错误:** ${errorMessage}`
+          } else if (parsed.type === 'tool_call' && parsed.tool_name) {
+            assistantMsg.loading = false
+            if (!assistantMsg.toolCalls) assistantMsg.toolCalls = []
+            const existing = assistantMsg.toolCalls.find(
+              (tc: ToolCallState) => tc.tool_name === parsed.tool_name && tc.status === 'running'
+            )
+            if (parsed.status === 'running' && !existing) {
+              assistantMsg.toolCalls.push({
+                tool_name: parsed.tool_name,
+                arguments: parsed.arguments || {},
+                status: 'running',
+              })
+              assistantMsg.statusText = `调用工具: ${parsed.tool_name}`
+            } else if (parsed.status === 'done' && existing) {
+              existing.result = parsed.result
+              existing.status = 'done'
+              assistantMsg.statusText = `工具调用完成: ${parsed.tool_name}`
+            }
+            scheduleScroll()
+          } else if (parsed.type === 'reasoning' && parsed.text) {
+            assistantMsg.loading = false
+            assistantMsg.statusText = t('chat.reasoning_in_progress')
+            assistantMsg.reasoning = (assistantMsg.reasoning ?? '') + parsed.text
+            scheduleScroll()
+          } else if (parsed.type === 'text' || parsed.text) {
+            assistantMsg.loading = false
+            assistantMsg.statusText = isFileProcessorAgent.value
+              ? t('chat.file_processor_answering')
+              : ''
+            appendAssistantStreamText(assistantMsg, parsed.text)
             scheduleScroll()
           }
         } catch {
@@ -518,14 +931,94 @@ async function sendMessage() {
   } catch (err: unknown) {
     if ((err as Error).name !== 'AbortError') {
       assistantMsg.loading = false
+      assistantMsg.statusText = isFileProcessorAgent.value
+        ? t('chat.file_processor_failed')
+        : t('chat.general_failed')
       assistantMsg.content += '\n\n**连接中断**'
     }
   } finally {
+    finalizeAssistantStreamText(assistantMsg)
     assistantMsg.loading = false
     assistantMsg.streaming = false
+    if (!isFileProcessorAgent.value) {
+      assistantMsg.statusText = ''
+    }
     streaming.value = false
     await scrollToBottom()
   }
+}
+
+function appendAssistantStreamText(msg: Message, chunk: string) {
+  let remaining = (msg.thinkBuffer ?? '') + chunk
+  msg.thinkBuffer = ''
+
+  while (remaining) {
+    if (msg.thinkTag) {
+      const currentTag = THINK_TAGS.find(item => item.start === msg.thinkTag)
+      if (!currentTag) {
+        msg.content += remaining
+        return
+      }
+      const closeIndex = remaining.indexOf(currentTag.end)
+      if (closeIndex === -1) {
+        const safeLength = remaining.length - currentTag.end.length + 1
+        if (safeLength > 0) {
+          msg.reasoning = (msg.reasoning ?? '') + remaining.slice(0, safeLength)
+          remaining = remaining.slice(safeLength)
+        } else {
+          msg.thinkBuffer = remaining
+          return
+        }
+      } else {
+        msg.reasoning = (msg.reasoning ?? '') + remaining.slice(0, closeIndex)
+        remaining = remaining.slice(closeIndex + currentTag.end.length)
+        msg.thinkTag = null
+      }
+      continue
+    }
+
+    let matchedTag: { start: string; end: string } | null = null
+    let matchedIndex = -1
+    for (const tag of THINK_TAGS) {
+      const index = remaining.indexOf(tag.start)
+      if (index >= 0 && (matchedIndex === -1 || index < matchedIndex)) {
+        matchedIndex = index
+        matchedTag = tag
+      }
+    }
+
+    if (!matchedTag) {
+      const safeLength = remaining.length - MAX_THINK_START_TAG + 1
+      if (safeLength > 0) {
+        msg.content += remaining.slice(0, safeLength)
+        remaining = remaining.slice(safeLength)
+      } else {
+        msg.thinkBuffer = remaining
+        return
+      }
+      continue
+    }
+
+    if (matchedIndex > 0) {
+      msg.content += remaining.slice(0, matchedIndex)
+      remaining = remaining.slice(matchedIndex)
+      continue
+    }
+
+    remaining = remaining.slice(matchedTag.start.length)
+    msg.thinkTag = matchedTag.start
+    msg.statusText = t('chat.reasoning_in_progress')
+  }
+}
+
+function finalizeAssistantStreamText(msg: Message) {
+  if (!msg.thinkBuffer) return
+  if (msg.thinkTag) {
+    msg.reasoning = (msg.reasoning ?? '') + msg.thinkBuffer
+  } else {
+    msg.content += msg.thinkBuffer
+  }
+  msg.thinkBuffer = ''
 }
 </script>
 
@@ -666,6 +1159,212 @@ async function sendMessage() {
 }
 
 .user-text { white-space: pre-wrap; }
+
+.process-status {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f5f8ff;
+  border: 1px solid #dbe6ff;
+}
+
+.agent-node-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-node-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #dbe6ff;
+}
+
+.agent-node-item.pending {
+  opacity: 0.72;
+}
+
+.agent-node-item.running {
+  border-color: #91caff;
+  background: #e6f4ff;
+}
+
+.agent-node-item.completed {
+  border-color: #b7eb8f;
+  background: #f6ffed;
+}
+
+.agent-node-item.error {
+  border-color: #ffccc7;
+  background: #fff2f0;
+}
+
+.agent-node-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-node-name {
+  font-size: 13px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.agent-node-status {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.agent-node-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.process-status-current {
+  font-size: 13px;
+  color: #0958d9;
+  font-weight: 600;
+}
+
+.process-status-log {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process-status-item {
+  font-size: 12px;
+  color: #5b6475;
+  line-height: 1.5;
+  opacity: 0;
+  animation: log-in 0.25s ease forwards;
+}
+
+.reasoning-panel {
+  margin-bottom: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+/* Tool calls */
+.tool-calls-panel {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-call-item {
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.tool-call-item.running {
+  border-color: #91caff;
+  background: #e6f4ff;
+}
+
+.tool-call-item.done {
+  border-color: #b7eb8f;
+  background: #f6ffed;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+}
+
+.tool-call-icon {
+  display: flex;
+  align-items: center;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.tool-call-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  flex: 1;
+}
+
+.tool-call-status-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.tool-call-status-badge.running {
+  background: #bae0ff;
+  color: #0958d9;
+}
+
+.tool-call-status-badge.done {
+  background: #d9f7be;
+  color: #237804;
+}
+
+.tool-call-details {
+  border-top: 1px solid #e5e7eb;
+}
+
+.tool-call-details summary {
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #6b7280;
+  user-select: none;
+}
+
+.tool-call-pre {
+  margin: 0;
+  padding: 6px 10px 8px;
+  font-size: 11.5px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #374151;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.reasoning-panel summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.reasoning-text {
+  margin: 0;
+  padding: 0 12px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+@keyframes log-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* Loading dots */
 .loading-dots {

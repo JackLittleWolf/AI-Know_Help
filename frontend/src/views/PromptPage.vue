@@ -15,6 +15,19 @@
                 </a-select>
               </a-form-item>
 
+              <a-form-item :label="t('prompt.input.agentLabel')">
+                <a-select
+                  v-model:value="promptAgentId"
+                  allow-clear
+                  style="width: 100%"
+                  :placeholder="t('prompt.input.agentPlaceholder')"
+                >
+                  <a-select-option v-for="agent in agents" :key="agent.id" :value="agent.id">
+                    {{ agent.name }}
+                  </a-select-option>
+                </a-select>
+              </a-form-item>
+
               <a-form-item :label="t('prompt.input.skillsLabel')">
                 <div class="skills-grid">
                   <a-empty
@@ -159,13 +172,16 @@ import {
 } from '@ant-design/icons-vue'
 import SplitPane from '@/components/SplitPane.vue'
 import http from '@/utils/http'
+import { getAgents, type Agent } from '@/api/agents'
 import type { PromptData, PromptResponse, SkillMeta, TestPromptResponse } from '@/types'
 
 const { t } = useI18n()
 const inputContent = ref('')
 const promptType = ref('general')
+const promptAgentId = ref<string | undefined>()
 const selectedSkills = ref<string[]>([])
 const skills = ref<SkillMeta[]>([])
+const agents = ref<Agent[]>([])
 const generating = ref(false)
 const validating = ref(false)
 const testing = ref(false)
@@ -176,7 +192,12 @@ const testResult = ref<string | null>(null)
 
 onMounted(async () => {
   try {
-    skills.value = await http.get<unknown, SkillMeta[]>('/skills')
+    const [loadedSkills, loadedAgents] = await Promise.all([
+      http.get<unknown, SkillMeta[]>('/skills'),
+      getAgents(),
+    ])
+    skills.value = loadedSkills
+    agents.value = loadedAgents
   } catch {
     // fall back to empty
   }
@@ -201,6 +222,7 @@ async function generatePrompt() {
       content: inputContent.value,
       type: promptType.value,
       skills: selectedSkills.value,
+      agent_id: promptAgentId.value,
     })
     if (res.code === 200 && res.data) {
       promptData.value = res.data

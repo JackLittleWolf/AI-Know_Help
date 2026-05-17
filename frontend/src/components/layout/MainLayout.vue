@@ -37,6 +37,10 @@
           <template #icon><robot-outlined /></template>
           <span>{{ t('nav.agents') }}</span>
         </a-menu-item>
+        <a-menu-item key="/knowledge">
+          <template #icon><database-outlined /></template>
+          <span>{{ t('nav.knowledge') }}</span>
+        </a-menu-item>
         <a-menu-item key="/settings">
           <template #icon><setting-outlined /></template>
           <span>{{ t('nav.settings') }}</span>
@@ -88,6 +92,7 @@ import {
   GlobalOutlined,
   CommentOutlined,
   RobotOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons-vue'
 import { useLocaleStore } from '@/stores/locale'
 
@@ -105,6 +110,8 @@ const pageTitle = computed(() => {
     '/ocr': t('header.ocr'),
     '/prompt': t('header.prompt'),
     '/chat': t('header.chat'),
+    '/agents': t('header.agents'),
+    '/knowledge': t('header.knowledge'),
     '/settings': t('header.settings'),
   }
   return map[route.path] ?? t('nav.title')
